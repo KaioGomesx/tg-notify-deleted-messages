@@ -9,7 +9,7 @@ from typing import List
 
 from dotenv import load_dotenv
 from telethon.events import NewMessage, MessageDeleted
-from telethon import TelegramClient
+from telethon import TelegramClient, utils
 from telethon.hints import Entity
 from telethon.tl.types import Message
 
@@ -28,7 +28,7 @@ def initialize_messages_db():
     cursor = connection.cursor()
 
     cursor.execute("""CREATE TABLE IF NOT EXISTS messages
-                 (message_id INTEGER PRIMARY KEY, message_from_id INTEGER, message TEXT, media BLOB, created DATETIME)""")
+                 (message_id INTEGER PRIMARY KEY, chat TEXT, message_from_id INTEGER, message TEXT, media BLOB, created DATETIME)""")
 
     cursor.execute("CREATE INDEX IF NOT EXISTS messages_created_index ON messages (created DESC)")
 
@@ -41,10 +41,13 @@ sqlite_cursor, sqlite_connection = initialize_messages_db()
 
 
 async def on_new_message(event: NewMessage.Event):
+    chat_from = event.chat if event.chat is not None and not event.chat.min else (await event.get_chat()) # telegram MAY not send the chat enity
+    chat_title = utils.get_display_name(chat_from)
     sqlite_cursor.execute(
-        "INSERT INTO messages (message_id, message_from_id, message, media, created) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO messages (message_id, chat, message_from_id, message, media, created) VALUES (?, ?, ?, ?, ?, ?)",
         (
             event.message.id,
+            chat_title,
             event.message.from_id,
             event.message.message,
             sqlite3.Binary(pickle.dumps(event.message.media)),
@@ -58,16 +61,17 @@ def load_messages_from_event(event: MessageDeleted.Event) -> List[Message]:
     sql_message_ids = ",".join(str(deleted_id) for deleted_id in event.deleted_ids)
 
     db_results = sqlite_cursor.execute(
-        f"SELECT message_id, message_from_id, message, media FROM messages WHERE message_id IN ({sql_message_ids})"
+        f"SELECT message_id, chat, message_from_id, message, media FROM messages WHERE message_id IN ({sql_message_ids})"
     ).fetchall()
 
     messages = []
     for db_result in db_results:
         messages.append({
             "id": db_result[0],
-            "message_from_id": db_result[1],
-            "message": db_result[2],
-            "media": pickle.loads(db_result[3]),
+            "chat": db_result[1],
+            "message_from_id": db_result[2],
+            "message": db_result[3],
+            "media": pickle.loads(db_result[4]),
         })
 
     return messages
@@ -90,8 +94,9 @@ async def get_mention_username(user: Entity):
 
 def get_on_message_deleted(client: TelegramClient):
     async def on_message_deleted(event: MessageDeleted.Event):
+        chat_from = event.chat if event.chat is not None and not event.chat.min else (await event.get_chat()) # telegram MAY not send the chat enity
+        chat_title = utils.get_display_name(chat_from)
         messages = load_messages_from_event(event)
-
         log_deleted_usernames = []
 
         for message in messages:
@@ -99,8 +104,7 @@ def get_on_message_deleted(client: TelegramClient):
             mention_username = await get_mention_username(user)
 
             log_deleted_usernames.append(mention_username + " (" + str(user.id) + ")")
-            text = "🔥🔥🔥🤫🤐🤭🙊🔥🔥🔥\n**Deleted message from: **[{username}](tg://user?id={id})\n".format(
-                username=mention_username, id=user.id)
+            text = f"**Chat: {message['chat']}\nDeleted message from: **[{mention_username}](tg://user?id={user.id})\n"
 
             if message['message']:
                 text += "**Message:** " + message['message']
