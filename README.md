@@ -30,7 +30,7 @@ docker-compose up -d app
 docker-compose stop app
 ```
 
-## OBS:
+## Notice:
 the line "restart: always" in docker-compose.yml causes the container to start automatically along with the system, if you want it not to start automatically just remove that line
 
 ## Disk usage and attachments
